@@ -1,67 +1,79 @@
 import streamlit as st
 import requests
-import pandas as pd
 from bs4 import BeautifulSoup
-import urllib.parse
+from urllib.parse import urlencode, urljoin
 
-st.set_page_config(page_title="BBFC Rating Checker", layout="wide")
+BASE_URL = "https://www.bbfc.co.uk"
+SEARCH_URL = "https://www.bbfc.co.uk/search"
 
-st.title("🎬 BBFC Rating Checker")
-st.write("Enter up to 5 titles (comma separated)")
+def search_bbfc(title):
+    params = {
+        "q": title,
+        "t[]": ["All", "Film", "TV Show"],
+    }
 
-# --- Input ---
-titles_input = st.text_input("Titles:")
+    response = requests.get(SEARCH_URL, params=params, timeout=15)
+    if response.status_code != 200:
+        return {"error": "BBFC site not reachable"}
 
-def get_bbfc_rating(title):
-    base_url = "https://www.bbfc.co.uk/search?q="
-    encoded_title = urllib.parse.quote(title)
-    search_url = base_url + encoded_title
+    soup = BeautifulSoup(response.text, "lxml")
 
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0"
+    # Find first search result link
+    result = soup.select_one("a[href^='/release/']")
+    if not result:
+        return {"found": False}
+
+    release_url = urljoin(BASE_URL, result["href"])
+
+    # Open release page
+    release_page = requests.get(release_url, timeout=15)
+    release_soup = BeautifulSoup(release_page.text, "lxml")
+
+    # Try to extract rating
+    rating_tag = release_soup.find("span", string=True)
+    rating = None
+
+    # Look for common BBFC rating labels
+    possible_ratings = ["U", "PG", "12", "12A", "15", "18", "R18"]
+    for r in possible_ratings:
+        if release_soup.find(string=r):
+            rating = r
+            break
+
+    if rating:
+        return {
+            "found": True,
+            "rating": rating,
+            "url": release_url
+        }
+    else:
+        return {
+            "found": True,
+            "rating": "Not clearly identified",
+            "url": release_url
         }
 
-        response = requests.get(search_url, headers=headers, timeout=10)
 
-        if response.status_code != 200:
-            return "Error", search_url
+# --- Streamlit UI ---
 
-        soup = BeautifulSoup(response.text, "lxml")
+st.set_page_config(page_title="BBFC Rating Checker", layout="centered")
 
-        # Attempt to find rating label in search result cards
-        rating_tag = soup.find("span", class_="age-rating")
+st.title("🎬 BBFC Rating Lookup Tool")
+st.caption("Check if a film/TV title exists in BBFC and retrieve its classification")
 
-        if rating_tag:
-            return rating_tag.text.strip(), search_url
-        else:
-            return "Not Found", search_url
+title_input = st.text_input("Enter Film / TV Title")
 
-    except Exception:
-        return "Error", search_url
+if st.button("Check Rating") and title_input:
+    with st.spinner("Searching BBFC..."):
+        result = search_bbfc(title_input)
 
+    if result.get("error"):
+        st.error(result["error"])
 
-# --- Button ---
-if st.button("Check Ratings"):
+    elif not result.get("found"):
+        st.warning("❌ Title not found on BBFC")
 
-    if not titles_input:
-        st.warning("Please enter at least one title.")
     else:
-        titles = [t.strip() for t in titles_input.split(",") if t.strip()]
-        
-        if len(titles) > 5:
-            st.error("Maximum 5 titles allowed.")
-        else:
-            results = []
-
-            for title in titles:
-                rating, url = get_bbfc_rating(title)
-                results.append({
-                    "Title": title,
-                    "Rated?": "Yes" if rating not in ["Not Found", "Error"] else "No",
-                    "BBFC Rating": rating,
-                    "Search URL": url
-                })
-
-            df = pd.DataFrame(results)
-            st.dataframe(df, use_container_width=True)
+        st.success("✅ Title Found")
+        st.write(f"**Rating:** {result['rating']}")
+        st.write(f"**BBFC URL:** {result['url']}")
