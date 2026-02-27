@@ -13,8 +13,8 @@ def search_bbfc(title, director=None, year=None):
     results_list = []
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+    browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+    page = browser.new_page()
 
         search_url = f"{BASE_URL}/search?q={title}"
         page.goto(search_url)
