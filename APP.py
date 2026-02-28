@@ -1,8 +1,8 @@
 import streamlit as st
-from playwright.sync_api import sync_playwright
 import pandas as pd
 import io
-from urllib.parse import urljoin
+import requests
+from bs4 import BeautifulSoup
 
 BASE_URL = "https://www.bbfc.co.uk"
 
@@ -12,62 +12,59 @@ BASE_URL = "https://www.bbfc.co.uk"
 def search_bbfc(title, director=None, year=None):
     results_list = []
 
-    with sync_playwright() as p:
-        # Launch Chromium in headless mode with no-sandbox for containerized environments
-        browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
-        page = browser.new_page()
+    # Search BBFC
+    search_url = f"{BASE_URL}/search?q={title}"
+    r = requests.get(search_url)
+    if r.status_code != 200:
+        return []
 
-        search_url = f"{BASE_URL}/search?q={title}"
-        page.goto(search_url)
-        page.wait_for_timeout(3000)  # wait for JS rendering
+    soup = BeautifulSoup(r.text, "html.parser")
+    links = soup.select("a[href*='/release/']")
 
-        # Get all release links
-        results = page.query_selector_all("a[href*='/release/']")
-        if not results:
-            browser.close()
-            return []
+    if not links:
+        return []
 
-        for r in results:
-            release_url = urljoin(BASE_URL, r.get_attribute("href"))
-            page.goto(release_url)
-            page.wait_for_timeout(2000)
+    for a in links:
+        release_url = BASE_URL + a["href"]
+        page = requests.get(release_url)
+        if page.status_code != 200:
+            continue
+        psoup = BeautifulSoup(page.text, "html.parser")
 
-            # Extract rating
-            rating = None
-            for el in page.query_selector_all("span"):
-                text = el.inner_text().strip()
-                if text in ["U", "PG", "12", "12A", "15", "18", "R18"]:
-                    rating = text
-                    break
+        # Extract rating
+        rating = None
+        for span in psoup.find_all("span"):
+            text = span.text.strip()
+            if text in ["U","PG","12","12A","15","18","R18"]:
+                rating = text
+                break
 
-            # Extract Director / Production Year
-            director_text = None
-            year_text = None
-            info_items = page.query_selector_all("li, dd")
-            for item in info_items:
-                text = item.inner_text().strip()
-                if "Director" in text:
-                    director_text = text.replace("Director", "").strip()
-                if "Production year" in text or "Release year" in text:
-                    year_text = ''.join(filter(str.isdigit, text))
+        # Extract Director / Year
+        director_text = None
+        year_text = None
+        for li in psoup.find_all(["li", "dd"]):
+            t = li.text.strip()
+            if "Director" in t:
+                director_text = t.replace("Director", "").strip()
+            if "Production year" in t or "Release year" in t:
+                year_text = ''.join(filter(str.isdigit, t))
 
-            # Apply optional filters
-            if director and director_text:
-                if director.lower() not in director_text.lower():
-                    continue
-            if year and year_text:
-                if str(year) != year_text:
-                    continue
+        # Apply filters
+        if director and director_text:
+            if director.lower() not in director_text.lower():
+                continue
+        if year and year_text:
+            if str(year) != year_text:
+                continue
 
-            results_list.append({
-                "Title": title,
-                "Rating": rating if rating else "Rating not detected",
-                "URL": release_url,
-                "Director": director_text,
-                "Year": year_text
-            })
+        results_list.append({
+            "Title": title,
+            "Rating": rating if rating else "Rating not detected",
+            "URL": release_url,
+            "Director": director_text,
+            "Year": year_text
+        })
 
-        browser.close()
     return results_list
 
 # ----------------------------
