@@ -13,13 +13,15 @@ def search_bbfc(title, director=None, year=None):
     results_list = []
 
     with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
-    page = browser.new_page()
+        # Launch Chromium in headless mode with no-sandbox for containerized environments
+        browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        page = browser.new_page()
 
         search_url = f"{BASE_URL}/search?q={title}"
         page.goto(search_url)
         page.wait_for_timeout(3000)  # wait for JS rendering
 
+        # Get all release links
         results = page.query_selector_all("a[href*='/release/']")
         if not results:
             browser.close()
@@ -96,7 +98,7 @@ if uploaded_file:
 
     output_rows = []
 
-    with st.spinner("Searching BBFC..."):
+    with st.spinner("Searching BBFC for all titles..."):
         for _, row in df_input.iterrows():
             title = row.get("Title")
             director = row.get("Director") if has_director else None
